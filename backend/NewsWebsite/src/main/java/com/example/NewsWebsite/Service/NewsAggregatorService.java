@@ -196,10 +196,12 @@ public class NewsAggregatorService {
     //get categories from both APIs
     public List<String> getCategories(String language) {
         List<String> categories = new ArrayList<>();
-        try {
-            categories.addAll(newsAPIService.getCategories(language));
-        } catch (Exception e) {
-            logger.error("Error fetching categories from NewsAPI: {}", e.getMessage(), e);
+        if (language.equals("en")) {
+            try {
+                categories.addAll(newsAPIService.getCategories(language));
+            } catch (Exception e) {
+                logger.error("Error fetching categories from NewsAPI: {}", e.getMessage(), e);
+            }
         }
         try {
             categories.addAll(gNewsService.getCategories(language));
@@ -247,40 +249,6 @@ public class NewsAggregatorService {
         return new ArrayList<>(articleMap.values());
     }
 
-    //search on the basis of date
-    public List<ArticleDTO> searchNewsByDate(String fromDate, String toDate, String language) {
-        List<ArticleDTO> mergedArticles = new ArrayList<>();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-
-        try {
-            LocalDate from = LocalDate.parse(fromDate, formatter);
-            LocalDate cutoff = LocalDate.of(2025, 6, 20);
-
-            // Call NewsAPI only if the fromDate is on or after 2025-06-20
-            if (!from.isBefore(cutoff) && language.equalsIgnoreCase("en")) {
-                mergedArticles.addAll(newsAPIService.getNewsByDateAndLanguage("latest", fromDate, toDate, language));
-            }
-
-            // GNews generally supports wider ranges, so we call it always
-            mergedArticles.addAll(gNewsService.getNewsByDateAndLanguage("latest", fromDate, toDate, language));
-
-        } catch (Exception e) {
-            logger.error("Error fetching news: {}", e.getMessage(), e);
-        }
-
-        // Deduplicate using a LinkedHashMap
-        Map<String, ArticleDTO> articleMap = new LinkedHashMap<>();
-        for (ArticleDTO article : mergedArticles) {
-            String key = generateKey(article);
-            if (key != null) {
-                articleMap.putIfAbsent(key, article);
-            }
-        }
-
-        return new ArrayList<>(articleMap.values());
-    }
-
-
 
 
     //to generate the unique key for each article so that none of the articles are repeated
@@ -294,5 +262,46 @@ public class NewsAggregatorService {
                         ? article.getSourceName().trim().toLowerCase() : "") + "_" +
                 (article.getUrl() != null ? article.getUrl().trim().toLowerCase() : "");
     }
+
+    //combined search
+    public List<ArticleDTO> searchCombined(String query, String source, String category, String sentiment, String language) {
+        List<ArticleDTO> newsFromNewsAPI = new ArrayList<>();
+        List<ArticleDTO> newsFromGNews = new ArrayList<>();
+
+        String queryToUse = (query == null || query.isEmpty()) ? "latest" : query;
+
+        if ("en".equalsIgnoreCase(language) && (category == null || category.isEmpty())) {
+            try {
+                newsFromNewsAPI = newsAPIService.getCombinedNews(queryToUse, source, category, sentiment, language);
+            } catch (Exception e) {
+                logger.error("Error fetching news from NewsAPI: {}", e.getMessage(), e);
+            }
+        }
+
+        try {
+            newsFromGNews = gNewsService.getCombinedNews(queryToUse, language, category, sentiment, source);
+        } catch (Exception e) {
+            logger.error("Error fetching news from GNews: {}", e.getMessage(), e);
+        }
+
+        Map<String, ArticleDTO> articleMap = new LinkedHashMap<>();
+
+        for (ArticleDTO article : newsFromNewsAPI) {
+            String key = generateKey(article);
+            if (key != null) {
+                articleMap.putIfAbsent(key, article);
+            }
+        }
+
+        for (ArticleDTO article : newsFromGNews) {
+            String key = generateKey(article);
+            if (key != null) {
+                articleMap.putIfAbsent(key, article);
+            }
+        }
+
+        return new ArrayList<>(articleMap.values());
+    }
+
 
 }

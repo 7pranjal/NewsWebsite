@@ -58,17 +58,22 @@ public class NewsController {
         return ResponseEntity.ok(categories);
     }
 
-   //endpoint to search by date
-    @GetMapping("/search-by-date")
-    public ResponseEntity<List<ArticleDTO>> searchNewsByDate(@RequestParam String fromDate, @RequestParam String toDate, @RequestParam(defaultValue = "en") String language) {
-        List<ArticleDTO> articles = newsAggregatorService.searchNewsByDate(fromDate, toDate, language);
-        return ResponseEntity.ok(articles);
-    }
-
     @GetMapping("/search-by-sentiment")
     public ResponseEntity<List<ArticleDTO>> searchNewsBySentiment(@RequestParam String sentiment, @RequestParam(defaultValue = "en") String language) {
         List<ArticleDTO> articles = newsAggregatorService.searchNewsBySentiment(sentiment, language);
         return ResponseEntity.ok(articles);
     }
+    @GetMapping("/search-combined")
+    public ResponseEntity<List<ArticleDTO>> searchCombined(
+            @RequestParam(required = false) String query,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String source,
+            @RequestParam(required = false) String sentiment,
+            @RequestParam(required = false, defaultValue = "en") String language) {
+
+        List<ArticleDTO> results = newsAggregatorService.searchCombined(query, source, category, sentiment,language);
+        return ResponseEntity.ok(results);
+    }
+
 }
 

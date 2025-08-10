@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -69,7 +70,8 @@ public class NewsAPIService {
                         source.optString("name"),
                         parseDate(a.optString("publishedAt")),
                         a.optString("language"),
-                        sentiment
+                        sentiment,
+                        null  // Category unknown for search results
                 );
 
                 articles.add(article);
@@ -121,7 +123,8 @@ public class NewsAPIService {
                         (source != null ? source.optString("name") : "Unknown"),
                         parseDate(a.optString("publishedAt")),
                         language,
-                        sentiment
+                        sentiment,
+                        null  // Category unknown for search results
                 );
 
                 articles.add(article);
@@ -231,7 +234,8 @@ public class NewsAPIService {
                         (sourceObj != null ? sourceObj.optString("name") : "Unknown"),
                         parseDate(a.optString("publishedAt")),
                         language,
-                        sentiment
+                        sentiment,
+                        null  // Category unknown for search results
                 );
 
                 articles.add(article);
@@ -311,7 +315,8 @@ public class NewsAPIService {
                         (source != null ? source.optString("name") : "Unknown"),
                         parseDate(a.optString("publishedAt")),
                         a.optString("language"),
-                        sentiment
+                        sentiment,
+                        category  // Add category information
                 );
 
                 articles.add(article);
@@ -332,5 +337,160 @@ public class NewsAPIService {
             return null;
         }
     }
+    public List<ArticleDTO> getCombinedNews(String query, String sourceName, String category, String sentimentFilter, String language) {
+        List<ArticleDTO> articles = new ArrayList<>();
+
+        try {
+            WebClient webClient = WebClient.create();
+
+            // Step 1: Resolve source name → ID (only needed for /everything endpoint)
+            String matchedSourceId = null;
+            if (sourceName != null && !sourceName.isBlank() && (category == null || category.isBlank())) {
+                String sourcesUrl = "https://newsapi.org/v2/top-headlines/sources?language=" + language + "&apiKey=" + apiKey;
+
+                String sourcesResponse = webClient.get()
+                        .uri(sourcesUrl)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+
+                JSONObject sourcesJson = new JSONObject(sourcesResponse);
+                JSONArray sourcesArray = sourcesJson.getJSONArray("sources");
+
+                for (int i = 0; i < sourcesArray.length(); i++) {
+                    JSONObject sourceObj = sourcesArray.getJSONObject(i);
+                    String name = sourceObj.optString("name");
+                    if (name != null && name.equalsIgnoreCase(sourceName.trim())) {
+                        matchedSourceId = sourceObj.optString("id");
+                        break;
+                    }
+                }
+
+                if (matchedSourceId == null || matchedSourceId.isBlank()) {
+                    log.warn("No matching source ID found for source name: {} in language: {}", sourceName, language);
+                    return articles;
+                }
+            }
+
+            // Step 2: Build NewsAPI query URL
+            StringBuilder urlBuilder;
+            
+            if (category != null && !category.isBlank()) {
+                // Use top-headlines endpoint for category-based search
+                urlBuilder = new StringBuilder("https://newsapi.org/v2/top-headlines?");
+                urlBuilder.append("category=").append(category.trim()).append("&");
+                
+                if (language != null && !language.isBlank()) {
+                    urlBuilder.append("language=").append(language.trim()).append("&");
+                }
+                
+                // Query is not supported in top-headlines, so we ignore it
+            } else {
+                // Use everything endpoint for query-based search
+                urlBuilder = new StringBuilder("https://newsapi.org/v2/everything?");
+
+                if (query != null && !query.isBlank()) {
+                    urlBuilder.append("q=").append(query.trim()).append("&");
+                } else {
+                    urlBuilder.append("q=latest&");
+                }
+
+                if (language != null && !language.isBlank()) {
+                    urlBuilder.append("language=").append(language.trim()).append("&");
+                }
+
+                if (matchedSourceId != null) {
+                    urlBuilder.append("sources=").append(matchedSourceId).append("&");
+                }
+            }
+
+            urlBuilder.append("sortBy=publishedAt&apiKey=").append(apiKey);
+
+            // Step 3: Fetch articles
+            String response = webClient.get()
+                    .uri(urlBuilder.toString())
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            JSONObject json = new JSONObject(response);
+
+            if (!json.has("articles")) {
+                log.warn("NewsAPI response missing 'articles' field: {}", response);
+                return articles;
+            }
+
+            JSONArray jsonArticles = json.getJSONArray("articles");
+
+            for (int i = 0; i < jsonArticles.length(); i++) {
+                JSONObject a = jsonArticles.getJSONObject(i);
+                JSONObject sourceObj = a.optJSONObject("source");
+
+                String title = a.optString("title", "");
+                String description = a.optString("description", "");
+                String sentimentInput = title + " " + description;
+                String analyzedSentiment = sentimentService.analyzeSentiment(sentimentInput);
+
+                // Step 4: Sentiment filter
+                if (sentimentFilter != null && !sentimentFilter.isBlank()) {
+                    if (analyzedSentiment == null || !analyzedSentiment.equalsIgnoreCase(sentimentFilter.trim())) {
+                        continue;
+                    }
+                }
+
+                // Step 5: Source filter (for category-based search)
+                if (category != null && !category.isBlank() && sourceName != null && !sourceName.isBlank()) {
+                    String articleSourceName = sourceObj != null ? sourceObj.optString("name", "") : "";
+                    if (!articleSourceName.trim().equalsIgnoreCase(sourceName.trim())) {
+                        continue;
+                    }
+                }
+
+                ArticleDTO article = new ArticleDTO(
+                        title,
+                        description,
+                        a.optString("content"),
+                        a.optString("url"),
+                        a.optString("urlToImage"),
+                        (sourceObj != null ? sourceObj.optString("name", "Unknown") : "Unknown"),
+                        parseDate(a.optString("publishedAt")),
+                        language,
+                        analyzedSentiment,
+                        category
+                );
+
+                articles.add(article);
+            }
+
+        } catch (Exception e) {
+            log.error("Error in getCombinedNews with query='{}', source='{}': {}", query, sourceName, e.getMessage());
+        }
+
+        return articles;
+    }
+
+
+
+    private boolean queryMatchesCategory(String title, String description, String category) {
+        String combined = (title + " " + description).toLowerCase();
+        switch (category.toLowerCase()) {
+            case "business":
+                return combined.contains("business") || combined.contains("economy") || combined.contains("market");
+            case "sports":
+                return combined.contains("sports") || combined.contains("football") || combined.contains("cricket");
+            case "technology":
+                return combined.contains("technology") || combined.contains("tech") || combined.contains("startup");
+            case "entertainment":
+                return combined.contains("entertainment") || combined.contains("movie") || combined.contains("film");
+            case "health":
+                return combined.contains("health") || combined.contains("medical") || combined.contains("covid");
+            case "science":
+                return combined.contains("science") || combined.contains("research") || combined.contains("study");
+            default:
+                return true;
+        }
+    }
+
+
 }
 

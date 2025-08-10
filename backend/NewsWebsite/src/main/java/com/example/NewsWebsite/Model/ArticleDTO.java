@@ -16,7 +16,10 @@ public class ArticleDTO {
      private LocalDateTime publishedAt;
      private String language;
      private String sentiment;
-     public ArticleDTO(String title, String description, String content, String url, String urlToImage, String sourceName, LocalDateTime publishedAt, String language, String sentiment) {
+     private String Category;
+
+     
+     public ArticleDTO(String title, String description, String content, String url, String urlToImage, String sourceName, LocalDateTime publishedAt, String language, String sentiment, String Category) {
           this.title = title;
           this.description = description;
           this.content = content;
@@ -26,8 +29,10 @@ public class ArticleDTO {
           this.publishedAt = publishedAt;
           this.language = language;
           this.sentiment = sentiment;
-
+            this.Category = Category;
      }
+
+
 
      public String getTitle() {
           return title;
@@ -100,5 +105,13 @@ public class ArticleDTO {
      public void setSentiment(String sentiment) {
           this.sentiment = sentiment;
      }
+        public String getCategory() {
+            return Category;
+        }
+        public void setCategory(String category) {
+            this.Category = category;
+        }
+
+
 
 }

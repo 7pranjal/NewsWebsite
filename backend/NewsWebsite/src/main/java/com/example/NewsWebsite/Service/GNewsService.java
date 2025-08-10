@@ -71,7 +71,8 @@ public class GNewsService {
                         (source != null ? source.optString("name") : "Unknown"),
                         parseDate(a.optString("publishedAt")),
                         a.optString("language"),
-                        sentiment
+                        sentiment,
+                        null  // Category unknown for search results
                 );
 
                 articles.add(article);
@@ -81,59 +82,6 @@ public class GNewsService {
             log.error("GNews fetch failed: {}", e.getMessage());
         }
 
-        return articles;
-    }
-
-    //search news by the date
-
-    public List<ArticleDTO> getNewsByDateAndLanguage(String query, String fromDate, String toDate, String language) {
-        String url = String.format(
-                "https://gnews.io/api/v4/search?q=%s&lang=%s&from=%s&to=%s&token=%s",
-                query, language, fromDate, toDate, token
-        );
-        List<ArticleDTO> articles = new ArrayList<>();
-        try {
-            String response = webClientBuilder.build()
-                    .get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-
-            JSONObject jsonObject = new JSONObject(response);
-            JSONArray jsonArticles = jsonObject.getJSONArray("articles");
-
-            for (int i = 0; i < jsonArticles.length(); i++) {
-                JSONObject a = jsonArticles.getJSONObject(i);
-                JSONObject sourceObj = a.optJSONObject("source");
-                String articleSourceName = sourceObj != null ? sourceObj.optString("name", "") : "";
-
-                ArticleDTO article = new ArticleDTO();
-                article.setTitle(a.optString("title"));
-                article.setDescription(a.optString("description"));
-                article.setContent(a.optString("content"));
-                article.setUrl(a.optString("url"));
-                article.setImageUrl(a.optString("image"));
-                article.setSourceName(articleSourceName);
-
-                String publishedAtStr = a.optString("publishedAt");
-                if (publishedAtStr != null && !publishedAtStr.isEmpty()) {
-                    try {
-                        LocalDateTime publishedAt = LocalDateTime.parse(publishedAtStr, DateTimeFormatter.ISO_DATE_TIME);
-                        article.setPublishedAt(publishedAt);
-                    } catch (Exception ex) {
-                        log.warn("Invalid publishedAt format: " + publishedAtStr);
-                    }
-                }
-
-                article.setLanguage(language);
-                article.setSentiment(sentimentService.analyzeSentiment(article.getTitle() + " " + article.getDescription()));
-                articles.add(article);
-            }
-
-        } catch (Exception e) {
-            log.error("Error fetching news using WebClient: " + e.getMessage());
-        }
         return articles;
     }
 
@@ -162,31 +110,22 @@ public class GNewsService {
                 JSONObject sourceObj = a.optJSONObject("source");
                 String articleSourceName = sourceObj != null ? sourceObj.optString("name", "") : "";
 
-
                 if (!articleSourceName.trim().equalsIgnoreCase(sourceName.trim())) {
                     continue;
                 }
 
-                ArticleDTO article = new ArticleDTO();
-                article.setTitle(a.optString("title"));
-                article.setDescription(a.optString("description"));
-                article.setContent(a.optString("content"));
-                article.setUrl(a.optString("url"));
-                article.setImageUrl(a.optString("image"));
-                article.setSourceName(articleSourceName);
-
-                String publishedAtStr = a.optString("publishedAt");
-                if (publishedAtStr != null && !publishedAtStr.isEmpty()) {
-                    try {
-                        LocalDateTime publishedAt = LocalDateTime.parse(publishedAtStr, DateTimeFormatter.ISO_DATE_TIME);
-                        article.setPublishedAt(publishedAt);
-                    } catch (Exception ex) {
-                        log.warn("Invalid publishedAt format: " + publishedAtStr);
-                    }
-                }
-
-                article.setLanguage(language);
-                article.setSentiment(sentimentService.analyzeSentiment(article.getTitle() + " " + article.getDescription()));
+                ArticleDTO article = new ArticleDTO(
+                    a.optString("title"),
+                    a.optString("description"),
+                    a.optString("content"),
+                    a.optString("url"),
+                    a.optString("image"),
+                    articleSourceName,
+                    parseDate(a.optString("publishedAt")),
+                    language,
+                    sentimentService.analyzeSentiment(a.optString("title") + " " + a.optString("description")),
+                    null // Category unknown for search results
+                );
                 articles.add(article);
             }
 
@@ -281,7 +220,8 @@ public class GNewsService {
                         (source != null ? source.optString("name") : "Unknown"),
                         parseDate(a.optString("publishedAt")),
                         language,
-                        sentiment
+                        sentiment,
+                        null // Category unknown for search results
                 );
 
                 topHeadlines.add(article);
@@ -297,33 +237,9 @@ public class GNewsService {
 
     public List<String> getCategories(String language) {
         List<String> categories = new ArrayList<>();
-        try {
-            String url = "https://gnews.io/api/v4/sources?lang=" + language + "&token=" + token;
-            WebClient webClient = WebClient.create();
-            String response = webClient.get()
-                    .uri(url)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-            JSONObject json = new JSONObject(response);
-
-            if (!json.has("sources")) {
-                log.warn("GNews sources response missing 'sources' field: {}", response);
-                return categories;
-            }
-
-            JSONArray jsonSources = json.getJSONArray("sources");
-            for (int i = 0; i < jsonSources.length(); i++) {
-                JSONObject source = jsonSources.getJSONObject(i);
-                String category = source.optString("category");
-                if (category != null && !category.isEmpty() && !categories.contains(category)) {
-                    categories.add(category);
-                }
-            }
-        } catch (Exception e) {
-            log.error("GNews fetch categories failed: {}", e.getMessage());
-        }
-        return categories;
+        return Arrays.asList(
+                "general", "world", "nation", "business", "technology", "entertainment", "sports", "science", "health"
+        );
     }
 
     //get news by categories
@@ -361,7 +277,8 @@ public class GNewsService {
                         (source != null ? source.optString("name") : "Unknown"),
                         parseDate(a.optString("publishedAt")),
                         a.optString("language"),
-                        sentiment
+                        sentiment,
+                        category  // Add category information
                 );
 
                 articles.add(article);
@@ -382,5 +299,93 @@ public class GNewsService {
             return null;
         }
     }
+
+    //combined news but no source wise filtering
+    public List<ArticleDTO> getCombinedNews(String query, String language, String category, String sentiment,String source) {
+        List<ArticleDTO> allArticles = new ArrayList<>();
+
+        StringBuilder urlBuilder = new StringBuilder(TOP_HEADLINES_URL);
+
+
+            if(category != null && !category.trim().isEmpty()) {
+                urlBuilder.append("category=").append(category.trim()).append("&");
+            }
+
+            if (query != null && !query.trim().isEmpty()) {
+                urlBuilder.append("q=").append(query.trim()).append("&");
+            }
+
+            if (language != null && !language.trim().isEmpty()) {
+                urlBuilder.append("lang=").append(language.trim()).append("&");
+            }
+
+
+
+        urlBuilder.append("apikey=").append(token);
+
+        try {
+            String response = webClientBuilder.build()
+                    .get()
+                    .uri(urlBuilder.toString())
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+
+            JSONObject jsonObject = new JSONObject(response);
+            JSONArray jsonArticles = jsonObject.getJSONArray("articles");
+
+            for (int i = 0; i < jsonArticles.length(); i++) {
+                JSONObject a = jsonArticles.getJSONObject(i);
+                JSONObject sourceObj = a.optJSONObject("source");
+                String articleSource = sourceObj != null ? sourceObj.optString("name", "") : "";
+
+                if (source != null && !source.trim().isEmpty() &&
+                        !articleSource.equalsIgnoreCase(source.trim())) {
+                    continue;
+                }
+
+                String title = a.optString("title", "");
+                String description = a.optString("description", "");
+                String content = a.optString("content", "");
+
+                String combinedText = (title + " " + description + " " + content).trim();
+                String analyzedSentiment = sentimentService.analyzeSentiment(combinedText);
+
+                if (sentiment != null && !sentiment.trim().isEmpty() &&
+                        !analyzedSentiment.equalsIgnoreCase(sentiment.trim())) {
+                    continue;
+                }
+
+                ArticleDTO article = new ArticleDTO(
+                        title,
+                        description,
+                        content,
+                        a.optString("url"),
+                        a.optString("image"),
+                        articleSource,
+                        parseDate(a.optString("publishedAt")),
+                        language,
+                        analyzedSentiment,
+                        category
+                );
+
+                allArticles.add(article);
+            }
+
+        } catch (Exception e) {
+            log.error("Error fetching news in searchCombined: " + e.getMessage());
+            return Collections.emptyList();
+        }
+
+        return allArticles;
+    }
+
+
+
+
+
+
+
+
 }
 
